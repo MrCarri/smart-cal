@@ -9,7 +9,7 @@ env/
 *.swp
 *.bak
 *.old
-
+__pycache__
 public/
 resources/_gen/
 node_modules/

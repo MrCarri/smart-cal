@@ -1,10 +1,11 @@
 """Crud functions module"""
 
 from datetime import datetime, timedelta
-from typing import Sequence
 
+from dateutil.relativedelta import FR, MO, SA, SU, TH, TU, WE, relativedelta
 from sqlmodel import Session, col, select
 
+from helpers import from_utc_to_local, to_utc_naive
 from models import Category, Event
 
 
@@ -23,26 +24,29 @@ class CalendarRepository:
         self,
         title: str,
         category_name: str,
-        start_date: datetime,
-        end_date: datetime | None = None,
+        start_date: str,
+        end_date: str | None = None,
     ) -> Event:
         """Creates event in DB
 
         Args:
             title (str): Event to be added to the database
-            start_date(datetime): Event start time.
-            end_date(datetime): Event end time,
+            start_date(str): Event start time.
+            end_date(str): Event end time,
             category_name(str): Assigned category to the event.
         Returns:
             Event: The created event object
         """
-        if not end_date:
-            end_date = start_date + timedelta(hours=1)
+        start_date_utc = to_utc_naive(date_str=start_date)
+        if not end_date or not end_date.strip():
+            end_date_utc = start_date_utc + timedelta(hours=1)
+        else:
+            end_date_utc = to_utc_naive(date_str=end_date)
         category = self.get_or_create_category(name=category_name)
         event = Event(
             title=title,
-            start_date=start_date,
-            end_date=end_date,
+            start_date=start_date_utc,
+            end_date=end_date_utc,
             category_model=category,
         )
 
@@ -82,15 +86,35 @@ class CalendarRepository:
             return self.create_category(name=name)
         return category
 
-    def get_events(self, start_date: datetime, end_date: datetime) -> Sequence[Event]:
+    def get_events(self, start_date: str, end_date: str) -> list[dict]:
+        start_utc = to_utc_naive(f"{start_date}")
+        if not end_date or end_date == "":
+            end_utc = to_utc_naive(f"{start_date} 23:59")
+        else:
+            end_utc = to_utc_naive(f"{end_date}")
         statement = (
             select(Event)
-            .where(Event.start_date >= start_date, Event.end_date <= end_date)
+            .where(Event.start_date >= start_utc, Event.start_date <= end_utc)
             .order_by(col(Event.start_date))
         )
-        return self.session.exec(statement).all()
+        events = list(self.session.exec(statement).all())
+        formatted_results = []
+        for event in events:
+            local_start = from_utc_to_local(event.start_date)
+            local_end = from_utc_to_local(event.end_date)
+            formatted_results.append(
+                {
+                    "id": event.id,
+                    "title": event.title,
+                    "start": local_start.strftime("%Y-%m-%d %H:%M"),
+                    "end": local_end.strftime("%Y-%m-%d %H:%M"),
+                    "category": event.category_model.name,
+                }
+            )
 
-    def delete_event(self, event_id: int) -> bool:
+        return formatted_results
+
+    def delete_event(self, event_id: int) -> str:
         """Deletes event by id
 
         Returns:
@@ -98,8 +122,7 @@ class CalendarRepository:
         """
         event = self.session.get(Event, event_id)
         if not event:
-            return False
-
+            return f"Error: No event found with ID {event_id}."
         self.session.delete(event)
         self.session.commit()
-        return True
+        return f"Event '{event.title}' (ID: {event_id}) deleted successfully."
