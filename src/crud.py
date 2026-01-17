@@ -1,8 +1,7 @@
 """Crud functions module"""
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
-from dateutil.relativedelta import FR, MO, SA, SU, TH, TU, WE, relativedelta
 from sqlmodel import Session, col, select
 
 from helpers import from_utc_to_local, to_utc_naive
@@ -86,7 +85,17 @@ class CalendarRepository:
             return self.create_category(name=name)
         return category
 
-    def get_events(self, start_date: str, end_date: str) -> list[dict]:
+    def get_events(self, start_date: str, end_date: str | None = None) -> list[dict]:
+        """Gets events on DB matching the range
+
+        Args:
+            start_date(str): Start date of the range
+            end_date(str | None): End date of the range. Can be None or "" depending on AI Agent.
+
+        Returns:
+            list[dict]: List of found events.
+
+        """
         start_utc = to_utc_naive(f"{start_date}")
         if not end_date or end_date == "":
             end_utc = to_utc_naive(f"{start_date} 23:59")

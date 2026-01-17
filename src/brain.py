@@ -3,7 +3,6 @@
 from datetime import datetime
 from string import Template
 
-from dateutil.relativedelta import relativedelta
 from ollama import chat
 
 from crud import CalendarRepository
