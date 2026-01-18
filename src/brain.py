@@ -4,7 +4,6 @@ from datetime import datetime
 from string import Template
 
 from ollama import chat
-
 from crud import CalendarRepository
 from helpers import (  # Translate names into English, for non English locales.
     DAYS_EN,
@@ -36,7 +35,6 @@ class AgentBrain:
     def _execute_tool(self, tool_call):
         func_name = tool_call.function.name
         args = tool_call.function.arguments
-
         # Special case for event_id (integer). If Agent returns "1" instead of 1, a preventive cast is needed.
         if "event_id" in args and isinstance(args["event_id"], str):
             try:
@@ -75,6 +73,14 @@ class AgentBrain:
                     tool_result = self._execute_tool(call)
                 except Exception as exc:
                     tool_result = f"Error calling tool. Reason: {str(exc)}"
+
+                # If there's a call to get events, add a small format reminder of the rules. this for small models.
+                if call.function.name == "get_events":
+                    reminder = (
+                        "\nIMPORTANT: Remember to list EVERY event. Format: [YYYY-MM-DD] - "
+                        "Event name (HH:MM - HH:MM). One line per event. NO summaries."
+                    )
+                    tool_result = reminder + str(tool_result)
                 # Add tool result to history
                 history.append(
                     {
@@ -88,32 +94,44 @@ class AgentBrain:
 
             final_response = chat(model=self.model, messages=history)
             return final_response.message.content
+        # This will fire in the case only that the model allucinated and returned a json
+        # Basically doesn't know what to say, so it returns a json that is valid for tools.
+        elif response.message.content and response.message.content.strip().startswith(
+            "{"
+        ):
+            return "Hi, I'm you calendar agent. What do you need?"
+
         # This return will be used when no tool is called, for example as a response for greeting.
         return response.message.content
 
     _PROMPT_TEMPLATE = Template(
         """
         # Role: Calendar Agent.
-        # Task your task is to administer appointments.
+        # Task:
+         Your task is to administer appointments. Your only responsability is to manage calendar events. You cannot anwser general knowledge questions, tell jokes or provide advice. If a request is outside calendar management, politely decline and explain that your specific role.
         # Context: today is $current_datetime. Timezone is Europe/Madrid
         # Guidelines:
         ## Tool usage Rules:
             - If you need to create, list or delete an event, call the appropriate tool.
+            - If the user's request is a greeting or general talk that doesn't require calendar information, respond normally without calling any tool.
         ## Behavior Rules:
             - Be concise. If no tool is needed, answer briefly.
+            - If the user doesn't request anything on specific, you can talk about what you are able to do.
             - If you are unsure about the name of the day of the appointment, just say the number.
             - If information is missing, ask it to the user to provide it.
+            - If the request is unclear, ask for clarification instead of guessing.
             - If a tool returns is an error message, explain it in simple terms.
         ## Format Rules:
             - Use the date format YYYY-MM-DD HH:MM for any date arguments.
+            - NEVER show the tool call JSON to the user.
         ## get_event tool Rules:
+            - COUNTING RULE: If the tool returns 4 items, you must output exactly 4 formatted lines. Duplicates must never be merged into a single line or a text description.
             - DO NOT summarize or skip events. You MUST list EVERY event returned by the tool in chronological order.
             - Start each line with the format: [YYYY-MM-DD] - Title (HH:MM - HH:MM).
             - If the tool returns no events for a period, clearly state: "No events found for this period."
             - TRUNCATION IS FORBIDDEN: You must list every single item found in the tool output. - Do not summarize. Missing events will be considered a logic error.
             - One line per event.
-            - No intro text. No outro text. No day names.
-            - If you add extra text, the system will fail.
+            - If you add extra text while listing events, the system will fail.
         """
     )
 
@@ -159,7 +177,7 @@ class AgentBrain:
             "type": "function",
             "function": {
                 "name": "get_events",
-                "description": "List appointments from the calendar. Use it when the user asks 'what do I have today', 'see my week' or 'check my schedule'.",
+                "description": "List appointments from the calendar. ONLY use this tool if the user explicitly asks about their schedule, appointments, or dates. Use it when the user asks 'what do I have today', 'see my week' or 'check my schedule'.DO NOT use this tool for greetings, identity questions, or general talk.",
                 "parameters": {
                     "type": "object",
                     "properties": {
