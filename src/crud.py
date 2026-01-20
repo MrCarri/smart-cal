@@ -25,7 +25,7 @@ class CalendarRepository:
         category_name: str,
         start_date: str,
         end_date: str | None = None,
-    ) -> Event:
+    ) -> dict:
         """Creates event in DB
 
         Args:
@@ -34,7 +34,7 @@ class CalendarRepository:
             end_date(str): Event end time,
             category_name(str): Assigned category to the event.
         Returns:
-            Event: The created event object
+            dict: Success status and the created event basic data.
         """
         start_date_utc = to_utc_naive(date_str=start_date)
         if not end_date or not end_date.strip():
@@ -52,7 +52,14 @@ class CalendarRepository:
         self.session.add(event)
         self.session.commit()
         self.session.refresh(event)
-        return event
+        return {
+            "status": "success",
+            "message": f"Event '{event.title}' created successfully.",
+            "id": event.id,
+            "start": from_utc_to_local(event.start_date).strftime("%Y-%m-%d %H:%M"),
+            "end": from_utc_to_local(event.end_date).strftime("%Y-%m-%d %H:%M"),
+            "category": category.name,
+        }
 
     def create_category(self, name: str) -> Category:
         """Creates category in DB
@@ -98,7 +105,7 @@ class CalendarRepository:
         """
         start_utc = to_utc_naive(f"{start_date}")
         if not end_date or end_date == "":
-            end_utc = to_utc_naive(f"{start_date} 23:59")
+            end_utc = to_utc_naive(f"{start_date[:10]} 23:59")
         else:
             end_utc = to_utc_naive(f"{end_date}")
         statement = (
@@ -123,15 +130,22 @@ class CalendarRepository:
 
         return formatted_results
 
-    def delete_event(self, event_id: int) -> str:
+    def delete_event(self, event_id: int) -> dict:
         """Deletes event by id
 
+        Args:
+            event_id(int): Id of the event to be deleted
         Returns:
-            bool: True if deleted, False if nonexistent.
+            dict: Status and message
         """
         event = self.session.get(Event, event_id)
         if not event:
-            return f"Error: No event found with ID {event_id}."
+            return {"status": "error", "message": f"No event found with ID {event_id}."}
+        title_backup = event.title
         self.session.delete(event)
         self.session.commit()
-        return f"Event '{event.title}' (ID: {event_id}) deleted successfully."
+        return {
+            "status": "success",
+            "message": f"Event '{title_backup}' deleted successfully.",
+            "id": event_id,
+        }

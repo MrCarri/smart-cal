@@ -1,6 +1,7 @@
 """AI brain module that contains the necessary code to define tools and how to use them"""
 
-from datetime import datetime
+from datetime import datetime, timedelta
+import json
 from string import Template
 
 from ollama import chat
@@ -24,9 +25,17 @@ class AgentBrain:
 
     def _get_system_prompt(self) -> str:
         now = datetime.now()
-        day_name = DAYS_EN[now.weekday()]
-        current_time_str = f"{day_name}, {now.strftime('%Y-%m-%d %H:%M')}"
 
+        tomorrow = now + timedelta(days=1)
+        next_monday = now + timedelta(
+            days=((7 - now.weekday()) if now.weekday() != 0 else 7)
+        )
+
+        current_time_str = (
+            f"Today is: {DAYS_EN[now.weekday()]} {now.strftime('%Y-%m-%d %H:%M')}. "
+            f"Tomorrow is {DAYS_EN[tomorrow.weekday()]} {tomorrow.strftime('%Y-%m-%d')}. "
+            f"Next week starts on {DAYS_EN[0]} {next_monday.strftime('%Y-%m-%d')}."
+        )
         return self._PROMPT_TEMPLATE.substitute({"current_datetime": current_time_str})
 
     def _get_tools_schema(self) -> list:
@@ -35,6 +44,12 @@ class AgentBrain:
     def _execute_tool(self, tool_call):
         func_name = tool_call.function.name
         args = tool_call.function.arguments
+
+        # Special case for vague dates.
+        if func_name == "create_event" or func_name == "get_events":
+            if not args.get("start_date") or args.get("start_date").strip() == "":
+                return "Error: The date is too vague. Please ask the user for a specific day or date."
+
         # Special case for event_id (integer). If Agent returns "1" instead of 1, a preventive cast is needed.
         if "event_id" in args and isinstance(args["event_id"], str):
             try:
@@ -75,17 +90,15 @@ class AgentBrain:
                     tool_result = f"Error calling tool. Reason: {str(exc)}"
 
                 # If there's a call to get events, add a small format reminder of the rules. this for small models.
-                if call.function.name == "get_events":
-                    reminder = (
-                        "\nIMPORTANT: Remember to list EVERY event. Format: [YYYY-MM-DD] - "
-                        "Event name (HH:MM - HH:MM). One line per event. NO summaries."
-                    )
-                    tool_result = reminder + str(tool_result)
+                if call.function.name == "get_events" and not tool_result:
+                    content_for_ai = "No events found for this period."
+                else:
+                    content_for_ai = json.dumps(tool_result)
                 # Add tool result to history
                 history.append(
                     {
                         "role": "tool",
-                        "content": str(tool_result),
+                        "content": content_for_ai,
                         "tool_name": call.function.name,
                     }
                 )
@@ -94,6 +107,7 @@ class AgentBrain:
 
             final_response = chat(model=self.model, messages=history)
             return final_response.message.content
+
         # This will fire in the case only that the model allucinated and returned a json
         # Basically doesn't know what to say, so it returns a json that is valid for tools.
         elif response.message.content and response.message.content.strip().startswith(
@@ -106,32 +120,32 @@ class AgentBrain:
 
     _PROMPT_TEMPLATE = Template(
         """
-        # Role: Calendar Agent.
-        # Task:
-         Your task is to administer appointments. Your only responsability is to manage calendar events. You cannot anwser general knowledge questions, tell jokes or provide advice. If a request is outside calendar management, politely decline and explain that your specific role.
-        # Context: today is $current_datetime. Timezone is Europe/Madrid
-        # Guidelines:
-        ## Tool usage Rules:
-            - If you need to create, list or delete an event, call the appropriate tool.
-            - If the user's request is a greeting or general talk that doesn't require calendar information, respond normally without calling any tool.
-        ## Behavior Rules:
-            - Be concise. If no tool is needed, answer briefly.
-            - If the user doesn't request anything on specific, you can talk about what you are able to do.
-            - If you are unsure about the name of the day of the appointment, just say the number.
-            - If information is missing, ask it to the user to provide it.
-            - If the request is unclear, ask for clarification instead of guessing.
-            - If a tool returns is an error message, explain it in simple terms.
-        ## Format Rules:
-            - Use the date format YYYY-MM-DD HH:MM for any date arguments.
-            - NEVER show the tool call JSON to the user.
-        ## get_event tool Rules:
-            - COUNTING RULE: If the tool returns 4 items, you must output exactly 4 formatted lines. Duplicates must never be merged into a single line or a text description.
-            - DO NOT summarize or skip events. You MUST list EVERY event returned by the tool in chronological order.
-            - Start each line with the format: [YYYY-MM-DD] - Title (HH:MM - HH:MM).
-            - If the tool returns no events for a period, clearly state: "No events found for this period."
-            - TRUNCATION IS FORBIDDEN: You must list every single item found in the tool output. - Do not summarize. Missing events will be considered a logic error.
-            - One line per event.
-            - If you add extra text while listing events, the system will fail.
+        # SYSTEM: Calendar Agent.
+
+        # CONTEXT:
+        - $current_datetime.
+        - Timezone is Europe/Madrid.
+
+        # TASK: Administer appointments only. Decline non-related questions, jokes or advice.
+
+        # Tool Rules:
+        - Use tools only for creating, listing or deleting events.
+        - If no tool is needed, respond with plain text.
+        - COUNTING RULE: If tool returns 4 items, you MUST output 4 lines. NEVER merge duplicates.
+        - TRUNCATION IS FORBIDDEN: Do not summarize or skip events.
+        - List in chronological order.
+        - If no events found, return "No events found for this period."
+
+        # Behavior Rules:
+        - Be concise. Skip pleasantries.
+        - If the request is unclear, briefly explain what you can do (e.g., "Tell me a date to check your schedule").
+        - If error message, explain it in simple terms.
+        - Use day numbers, never names (e.g. 2026-01-20, not Tuesday).
+
+        # Format Rules:
+        - NEVER output raw JSON. Always respond in plain text.
+        - LIST FORMAT: ID: [event_id] - [YYYY-MM-DD] - Title (HH:MM - HH:MM)
+        - For tool arguments, always use: YYYY-MM-DD HH:MM
         """
     )
 
@@ -140,33 +154,25 @@ class AgentBrain:
             "type": "function",
             "function": {
                 "name": "create_event",
-                "description": """Create an event for the calendar. Always Use it when the user wants to add, shedule or create a new appointment for the calendar. You must at least extract title, category_name, and start_date of the appointment.
-                If the date is relative you must calculate the correct day taking into account today's date.
-                Good Example: Add a work meeting at 13:00 tomorrow. -> title= 'Work meeting', category_name='work', start_date='2026-05-20 13:00'
-                Good Example: Next Wednesday -> if today is Sunday, 2026-01-11 then -> start_date='2026-01-14'
-                Bad Example: Dinner tomorrow -> start_date='tomorrow at 8pm' (ERROR: Should be YYYY-MM-DD HH:MM)
-                """,
+                "description": "Add a new appointment. Use ONLY when the user wants to schedule something. Extract title, category, and date. If the date is vague or not 100 percent certain, return an empty string for start_date.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "title": {
                             "type": "string",
-                            "description": "Little summary of the appointment",
+                            "description": "Summary of the appointment",
                         },
                         "start_date": {
                             "type": "string",
-                            "description": """When the event starts. Always use ISO Format assuming timezone Europe/Madrid YYYY-MM-DD HH:MM
-                                Good Example: Doctor appointment today at 14 -> '2026-05-19 14:00'
-
-                            """,
+                            "description": "ISO YYYY-MM-DD HH:MM. If the day is vague (e.g. 'next week', 'soon', 'later') return EMPTY STRING. Never guess. Examples: 'next Wednesday' -> '', 'today at 5' -> '2026-01-20 17:00'",
                         },
                         "end_date": {
                             "type": "string",
-                            "description": "When the event ends. If uknown, return empty string. Never invent end time. Always use ISO Format assuming timezone Europe/Madrid YYYY-MM-DD HH:MM",
+                            "description": "ISO YYYY-MM-DD HH:MM. Return empty string if not specified.",
                         },
                         "category_name": {
                             "type": "string",
-                            "description": "Category name of the appointment. Use relevant terms such as work, medical, personal, groceries... Never invent the category name. If not sure, use 'personal'. ",
+                            "description": "Category (work, medical, personal, etc). Default to 'personal' if unsure.",
                         },
                     },
                     "required": ["title", "start_date", "category_name"],
@@ -177,20 +183,17 @@ class AgentBrain:
             "type": "function",
             "function": {
                 "name": "get_events",
-                "description": "List appointments from the calendar. ONLY use this tool if the user explicitly asks about their schedule, appointments, or dates. Use it when the user asks 'what do I have today', 'see my week' or 'check my schedule'.DO NOT use this tool for greetings, identity questions, or general talk.",
+                "description": "List appointments from the calendar. Use it for 'what do I have', 'check my schedule' or 'plans'. You must calculate absolute dates. If the date is vague (e.g., 'soon', 'later', 'next week') and you cannot determine the exact start day, return an EMPTY STRING.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "start_date": {
                             "type": "string",
-                            "description": """When the event starts. Always use ISO Format assuming timezone Europe/Madrid YYYY-MM-DD HH:MM
-                                If the user does not provide an hour, assume 00:00.
-                                Good Example: 'What I have to do today? -> '2026-05-19 00:00'
-                            """,
+                            "description": "ISO YYYY-MM-DD HH:MM. Default time: 00:00. If the user is Vague, return an EMPTY STRING. Example: 'Today' -> '2026-01-20 00:00', 'Soon' -> '' ",
                         },
                         "end_date": {
                             "type": "string",
-                            "description": "When the event ends. If uknown, return empty string. Never invent end time. Always use ISO Format assuming timezone Europe/Madrid YYYY-MM-DD HH:MM If the user does not provide an hour, assume 23:59.",
+                            "description": "ISO YYYY-MM-DD HH:MM. If not specified or unknown, return an empty string. Never invent an end date.",
                         },
                     },
                     "required": ["start_date"],
