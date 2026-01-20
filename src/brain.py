@@ -1,6 +1,7 @@
 """AI brain module that contains the necessary code to define tools and how to use them"""
 
 from datetime import datetime
+import json
 from string import Template
 
 from ollama import chat
@@ -75,17 +76,15 @@ class AgentBrain:
                     tool_result = f"Error calling tool. Reason: {str(exc)}"
 
                 # If there's a call to get events, add a small format reminder of the rules. this for small models.
-                if call.function.name == "get_events":
-                    reminder = (
-                        "\nIMPORTANT: Remember to list EVERY event. Format: [YYYY-MM-DD] - "
-                        "Event name (HH:MM - HH:MM). One line per event. NO summaries."
-                    )
-                    tool_result = reminder + str(tool_result)
+                if call.function.name == "get_events" and not tool_result:
+                    content_for_ai = "No results found for this period."
+                else:
+                    content_for_ai = json.dumps(tool_result)
                 # Add tool result to history
                 history.append(
                     {
                         "role": "tool",
-                        "content": str(tool_result),
+                        "content": content_for_ai,
                         "tool_name": call.function.name,
                     }
                 )
@@ -94,6 +93,7 @@ class AgentBrain:
 
             final_response = chat(model=self.model, messages=history)
             return final_response.message.content
+
         # This will fire in the case only that the model allucinated and returned a json
         # Basically doesn't know what to say, so it returns a json that is valid for tools.
         elif response.message.content and response.message.content.strip().startswith(
@@ -106,32 +106,28 @@ class AgentBrain:
 
     _PROMPT_TEMPLATE = Template(
         """
-        # Role: Calendar Agent.
-        # Task:
-         Your task is to administer appointments. Your only responsability is to manage calendar events. You cannot anwser general knowledge questions, tell jokes or provide advice. If a request is outside calendar management, politely decline and explain that your specific role.
-        # Context: today is $current_datetime. Timezone is Europe/Madrid
-        # Guidelines:
-        ## Tool usage Rules:
-            - If you need to create, list or delete an event, call the appropriate tool.
-            - If the user's request is a greeting or general talk that doesn't require calendar information, respond normally without calling any tool.
-        ## Behavior Rules:
-            - Be concise. If no tool is needed, answer briefly.
-            - If the user doesn't request anything on specific, you can talk about what you are able to do.
-            - If you are unsure about the name of the day of the appointment, just say the number.
-            - If information is missing, ask it to the user to provide it.
-            - If the request is unclear, ask for clarification instead of guessing.
-            - If a tool returns is an error message, explain it in simple terms.
-        ## Format Rules:
-            - Use the date format YYYY-MM-DD HH:MM for any date arguments.
-            - NEVER show the tool call JSON to the user.
-        ## get_event tool Rules:
-            - COUNTING RULE: If the tool returns 4 items, you must output exactly 4 formatted lines. Duplicates must never be merged into a single line or a text description.
-            - DO NOT summarize or skip events. You MUST list EVERY event returned by the tool in chronological order.
-            - Start each line with the format: [YYYY-MM-DD] - Title (HH:MM - HH:MM).
-            - If the tool returns no events for a period, clearly state: "No events found for this period."
-            - TRUNCATION IS FORBIDDEN: You must list every single item found in the tool output. - Do not summarize. Missing events will be considered a logic error.
-            - One line per event.
-            - If you add extra text while listing events, the system will fail.
+        # SYSTEM: Calendar Agent. Today is $current_datetime. Timezone is Europe/Madrid.
+
+        # TASK: Administer appointments. Stick to manage calendar events. Decline answering non related questions, jokes or advice.
+
+        # Tool Rules:
+        - Call the appropriate tool if asked to create, list or delete events.
+        - If request doesn't require tools, respond normally.
+        - COUNTING RULE: If a tool returns 4 items, output must be exactly 4 items. Never merge duplicates.
+        - DO NOT summarize or skip events.
+        - List in chronological order.
+        - If no events found, return "Not event founds for this period"
+
+        # Behavior Rules
+        - Be concise.
+        - If request doesn't request anything specific, explain what you can do.
+        - If request unclear or not sure, don't do anything.
+        - If error message, explain the error in simple terms.
+        - Don't say day names. Use day number instead.
+
+        # Format Rules:
+        - Never answer with JSON.
+        - ALWAYS use date format YYYY-MM-DD HH:MM.
         """
     )
 
@@ -162,7 +158,7 @@ class AgentBrain:
                         },
                         "end_date": {
                             "type": "string",
-                            "description": "When the event ends. If uknown, return empty string. Never invent end time. Always use ISO Format assuming timezone Europe/Madrid YYYY-MM-DD HH:MM",
+                            "description": "When the event ends. If unknown, return empty string. Never invent end time. Always use ISO Format assuming timezone Europe/Madrid YYYY-MM-DD HH:MM",
                         },
                         "category_name": {
                             "type": "string",
@@ -190,7 +186,7 @@ class AgentBrain:
                         },
                         "end_date": {
                             "type": "string",
-                            "description": "When the event ends. If uknown, return empty string. Never invent end time. Always use ISO Format assuming timezone Europe/Madrid YYYY-MM-DD HH:MM If the user does not provide an hour, assume 23:59.",
+                            "description": "When the event ends. If unknown, return empty string. Never invent end time. Always use ISO Format assuming timezone Europe/Madrid YYYY-MM-DD HH:MM If the user does not provide an hour, assume 23:59.",
                         },
                     },
                     "required": ["start_date"],
