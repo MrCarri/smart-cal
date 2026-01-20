@@ -1,6 +1,6 @@
 """AI brain module that contains the necessary code to define tools and how to use them"""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from string import Template
 
@@ -25,9 +25,17 @@ class AgentBrain:
 
     def _get_system_prompt(self) -> str:
         now = datetime.now()
-        day_name = DAYS_EN[now.weekday()]
-        current_time_str = f"{day_name}, {now.strftime('%Y-%m-%d %H:%M')}"
 
+        tomorrow = now + timedelta(days=1)
+        next_monday = now + timedelta(
+            days=((7 - now.weekday()) if now.weekday() != 0 else 7)
+        )
+
+        current_time_str = (
+            f"Today is: {DAYS_EN[now.weekday()]} {now.strftime('%Y-%m-%d %H:%M')}. "
+            f"Tomorrow is {DAYS_EN[tomorrow.weekday()]} {tomorrow.strftime('%Y-%m-%d')}. "
+            f"Next week starts on {DAYS_EN[0]} {next_monday.strftime('%Y-%m-%d')}."
+        )
         return self._PROMPT_TEMPLATE.substitute({"current_datetime": current_time_str})
 
     def _get_tools_schema(self) -> list:
@@ -36,6 +44,12 @@ class AgentBrain:
     def _execute_tool(self, tool_call):
         func_name = tool_call.function.name
         args = tool_call.function.arguments
+
+        # Special case for vague dates.
+        if func_name == "create_event" or func_name == "get_events":
+            if not args.get("start_date") or args.get("start_date").strip() == "":
+                return "Error: The date is too vague. Please ask the user for a specific day or date."
+
         # Special case for event_id (integer). If Agent returns "1" instead of 1, a preventive cast is needed.
         if "event_id" in args and isinstance(args["event_id"], str):
             try:
@@ -77,7 +91,7 @@ class AgentBrain:
 
                 # If there's a call to get events, add a small format reminder of the rules. this for small models.
                 if call.function.name == "get_events" and not tool_result:
-                    content_for_ai = "No results found for this period."
+                    content_for_ai = "No events found for this period."
                 else:
                     content_for_ai = json.dumps(tool_result)
                 # Add tool result to history
@@ -106,28 +120,32 @@ class AgentBrain:
 
     _PROMPT_TEMPLATE = Template(
         """
-        # SYSTEM: Calendar Agent. Today is $current_datetime. Timezone is Europe/Madrid.
+        # SYSTEM: Calendar Agent.
 
-        # TASK: Administer appointments. Stick to manage calendar events. Decline answering non related questions, jokes or advice.
+        # CONTEXT:
+        - $current_datetime.
+        - Timezone is Europe/Madrid.
+
+        # TASK: Administer appointments only. Decline non-related questions, jokes or advice.
 
         # Tool Rules:
-        - Call the appropriate tool if asked to create, list or delete events.
-        - If request doesn't require tools, respond normally.
-        - COUNTING RULE: If a tool returns 4 items, output must be exactly 4 items. Never merge duplicates.
-        - DO NOT summarize or skip events.
+        - Use tools only for creating, listing or deleting events.
+        - If no tool is needed, respond with plain text.
+        - COUNTING RULE: If tool returns 4 items, you MUST output 4 lines. NEVER merge duplicates.
+        - TRUNCATION IS FORBIDDEN: Do not summarize or skip events.
         - List in chronological order.
-        - If no events found, return "Not event founds for this period"
+        - If no events found, return "No events found for this period."
 
-        # Behavior Rules
-        - Be concise.
-        - If request doesn't request anything specific, explain what you can do.
-        - If request unclear or not sure, don't do anything.
-        - If error message, explain the error in simple terms.
-        - Don't say day names. Use day number instead.
+        # Behavior Rules:
+        - Be concise. Skip pleasantries.
+        - If the request is unclear, briefly explain what you can do (e.g., "Tell me a date to check your schedule").
+        - If error message, explain it in simple terms.
+        - Use day numbers, never names (e.g. 2026-01-20, not Tuesday).
 
         # Format Rules:
-        - Never answer with JSON.
-        - ALWAYS use date format YYYY-MM-DD HH:MM.
+        - NEVER output raw JSON. Always respond in plain text.
+        - LIST FORMAT: ID: [event_id] - [YYYY-MM-DD] - Title (HH:MM - HH:MM)
+        - For tool arguments, always use: YYYY-MM-DD HH:MM
         """
     )
 
@@ -136,33 +154,25 @@ class AgentBrain:
             "type": "function",
             "function": {
                 "name": "create_event",
-                "description": """Create an event for the calendar. Always Use it when the user wants to add, shedule or create a new appointment for the calendar. You must at least extract title, category_name, and start_date of the appointment.
-                If the date is relative you must calculate the correct day taking into account today's date.
-                Good Example: Add a work meeting at 13:00 tomorrow. -> title= 'Work meeting', category_name='work', start_date='2026-05-20 13:00'
-                Good Example: Next Wednesday -> if today is Sunday, 2026-01-11 then -> start_date='2026-01-14'
-                Bad Example: Dinner tomorrow -> start_date='tomorrow at 8pm' (ERROR: Should be YYYY-MM-DD HH:MM)
-                """,
+                "description": "Add a new appointment. Use ONLY when the user wants to schedule something. Extract title, category, and date. If the date is vague or not 100 percent certain, return an empty string for start_date.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "title": {
                             "type": "string",
-                            "description": "Little summary of the appointment",
+                            "description": "Summary of the appointment",
                         },
                         "start_date": {
                             "type": "string",
-                            "description": """When the event starts. Always use ISO Format assuming timezone Europe/Madrid YYYY-MM-DD HH:MM
-                                Good Example: Doctor appointment today at 14 -> '2026-05-19 14:00'
-
-                            """,
+                            "description": "ISO YYYY-MM-DD HH:MM. If the day is vague (e.g. 'next week', 'soon', 'later') return EMPTY STRING. Never guess. Examples: 'next Wednesday' -> '', 'today at 5' -> '2026-01-20 17:00'",
                         },
                         "end_date": {
                             "type": "string",
-                            "description": "When the event ends. If unknown, return empty string. Never invent end time. Always use ISO Format assuming timezone Europe/Madrid YYYY-MM-DD HH:MM",
+                            "description": "ISO YYYY-MM-DD HH:MM. Return empty string if not specified.",
                         },
                         "category_name": {
                             "type": "string",
-                            "description": "Category name of the appointment. Use relevant terms such as work, medical, personal, groceries... Never invent the category name. If not sure, use 'personal'. ",
+                            "description": "Category (work, medical, personal, etc). Default to 'personal' if unsure.",
                         },
                     },
                     "required": ["title", "start_date", "category_name"],
@@ -173,20 +183,17 @@ class AgentBrain:
             "type": "function",
             "function": {
                 "name": "get_events",
-                "description": "List appointments from the calendar. ONLY use this tool if the user explicitly asks about their schedule, appointments, or dates. Use it when the user asks 'what do I have today', 'see my week' or 'check my schedule'.DO NOT use this tool for greetings, identity questions, or general talk.",
+                "description": "List appointments from the calendar. Use it for 'what do I have', 'check my schedule' or 'plans'. You must calculate absolute dates. If the date is vague (e.g., 'soon', 'later', 'next week') and you cannot determine the exact start day, return an EMPTY STRING.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "start_date": {
                             "type": "string",
-                            "description": """When the event starts. Always use ISO Format assuming timezone Europe/Madrid YYYY-MM-DD HH:MM
-                                If the user does not provide an hour, assume 00:00.
-                                Good Example: 'What I have to do today? -> '2026-05-19 00:00'
-                            """,
+                            "description": "ISO YYYY-MM-DD HH:MM. Default time: 00:00. If the user is Vague, return an EMPTY STRING. Example: 'Today' -> '2026-01-20 00:00', 'Soon' -> '' ",
                         },
                         "end_date": {
                             "type": "string",
-                            "description": "When the event ends. If unknown, return empty string. Never invent end time. Always use ISO Format assuming timezone Europe/Madrid YYYY-MM-DD HH:MM If the user does not provide an hour, assume 23:59.",
+                            "description": "ISO YYYY-MM-DD HH:MM. If not specified or unknown, return an empty string. Never invent an end date.",
                         },
                     },
                     "required": ["start_date"],

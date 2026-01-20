@@ -57,6 +57,7 @@ class CalendarRepository:
             "message": f"Event '{event.title}' created successfully.",
             "id": event.id,
             "start": from_utc_to_local(event.start_date).strftime("%Y-%m-%d %H:%M"),
+            "end": from_utc_to_local(event.end_date).strftime("%Y-%m-%d %H:%M"),
             "category": category.name,
         }
 
