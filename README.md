@@ -44,7 +44,7 @@ Supports **Python library integration** and optional CLI interface.
 
 ```bash
 # Clone the repository
-git clone https://github.com/<YOUR_USERNAME>/smart-cal.git
+git clone https://github.com/MrCarri/smart-cal.git
 cd smart-cal
 
 # Create a virtual environment
