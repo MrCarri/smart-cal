@@ -24,11 +24,13 @@ def ask(
         typer.secho(f"[*] Consulting AI... ({model})...", fg=typer.colors.BRIGHT_BLACK)
 
         try:
+            typer.echo("\n" + "-" * 30)
+
             response = brain.chat(prompt)
 
-            typer.echo("\n" + "-" * 30)
-            typer.secho("🤖 Assistant:", fg=typer.colors.BRIGHT_BLUE, bold=True)
-            typer.echo(response)
+            # typer.echo("\n" + "-" * 30)
+            # typer.secho("🤖 Assistant:", fg=typer.colors.BRIGHT_BLUE, bold=True)
+            # typer.echo(response)
             typer.echo("-" * 30 + "\n")
 
         except Exception as e:

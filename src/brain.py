@@ -105,8 +105,19 @@ class AgentBrain:
 
             # 3. Final call to ollama to present results
 
-            final_response = chat(model=self.model, messages=history)
-            return final_response.message.content
+            final_response_stream = chat(
+                model=self.model, messages=history, stream=True
+            )
+            full_content = ""
+            print("Agent: ", end="", flush=True)
+
+            for chunk in final_response_stream:
+                token = chunk["message"]["content"]
+                print(token, end="", flush=True)
+                full_content += token
+
+            print()
+            return full_content
 
         # This will fire in the case only that the model allucinated and returned a json
         # Basically doesn't know what to say, so it returns a json that is valid for tools.
