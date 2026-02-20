@@ -7,6 +7,8 @@ from sqlmodel import Session, col, select
 from helpers import from_utc_to_local, to_utc_naive
 from models import Category, Event
 
+import dateparser
+
 
 class CalendarRepository:
     """Generic repository for CRUD"""
@@ -103,11 +105,20 @@ class CalendarRepository:
             list[dict]: List of found events.
 
         """
-        start_utc = to_utc_naive(f"{start_date}")
+        dt_start = dateparser.parse(
+            start_date, settings={"PREFER_DATES_FROM": "future"}
+        )
+
+        if not dt_start:
+            return []
+        start_utc = to_utc_naive(f"{dt_start.strftime('%Y-%m-%d %H:%M')}")
         if not end_date or end_date == "":
-            end_utc = to_utc_naive(f"{start_date[:10]} 23:59")
+            end_utc = to_utc_naive(dt_start.strftime("%Y-%m-%d 23:59"))
         else:
-            end_utc = to_utc_naive(f"{end_date}")
+            dt_end = dateparser.parse(
+                end_date, settings={"PREFER_DATES_FROM": "future"}
+            )
+            end_utc = to_utc_naive(f"{dt_end}")
         statement = (
             select(Event)
             .where(Event.start_date >= start_utc, Event.start_date <= end_utc)

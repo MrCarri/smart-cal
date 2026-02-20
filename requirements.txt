@@ -2,3 +2,4 @@ sqlmodel==0.0.31
 ollama==0.6.1
 typer==0.21.1
 python-dateutil==2.9.0
+dateparser==1.3.0

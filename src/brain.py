@@ -73,12 +73,9 @@ class AgentBrain:
             tools=self._get_tools_schema(),
             options={
                 "temperature": 0.0,
-                "num_predict": 500,
+                "num_predict": 50,
             },
         )
-
-        # Add response to history
-        history.append(response.message)  # type: ignore (Ignore linter complaints, correct way to do it according to ollama docs.)
 
         # 2. Call tools management
         if response.message.tool_calls:
@@ -91,61 +88,20 @@ class AgentBrain:
 
                 # If there's a call to get events, add a small format reminder of the rules. this for small models.
                 if call.function.name == "get_events" and not tool_result:
-                    content_for_ai = "No events found for this period."
-                else:
-                    content_for_ai = json.dumps(tool_result)
-                # Add tool result to history
-                history.append(
-                    {
-                        "role": "tool",
-                        "content": content_for_ai,
-                        "tool_name": call.function.name,
-                    }
-                )
+                    return "No events found for this period."
+                return tool_result
 
-            # 3. Final call to ollama to present results
-
-            final_response = chat(model=self.model, messages=history)
-            return final_response.message.content
-
-        # This will fire in the case only that the model allucinated and returned a json
-        # Basically doesn't know what to say, so it returns a json that is valid for tools.
-        elif response.message.content and response.message.content.strip().startswith(
-            "{"
-        ):
-            return "Hi, I'm you calendar agent. What do you need?"
-
-        # This return will be used when no tool is called, for example as a response for greeting.
-        return response.message.content
+        return "Sorry, Don't understand."
 
     _PROMPT_TEMPLATE = Template(
         """
-        # SYSTEM: Calendar Agent.
 
+        # SYSTEM: Calendar Agent.
+        # TASK:  Call the required tool and exit.
         # CONTEXT:
         - $current_datetime.
         - Timezone is Europe/Madrid.
 
-        # TASK: Administer appointments only. Decline non-related questions, jokes or advice.
-
-        # Tool Rules:
-        - Use tools only for creating, listing or deleting events.
-        - If no tool is needed, respond with plain text.
-        - COUNTING RULE: If tool returns 4 items, you MUST output 4 lines. NEVER merge duplicates.
-        - TRUNCATION IS FORBIDDEN: Do not summarize or skip events.
-        - List in chronological order.
-        - If no events found, return "No events found for this period."
-
-        # Behavior Rules:
-        - Be concise. Skip pleasantries.
-        - If the request is unclear, briefly explain what you can do (e.g., "Tell me a date to check your schedule").
-        - If error message, explain it in simple terms.
-        - Use day numbers, never names (e.g. 2026-01-20, not Tuesday).
-
-        # Format Rules:
-        - NEVER output raw JSON. Always respond in plain text.
-        - LIST FORMAT: ID: [event_id] - [YYYY-MM-DD] - Title (HH:MM - HH:MM)
-        - For tool arguments, always use: YYYY-MM-DD HH:MM
         """
     )
 
@@ -154,25 +110,25 @@ class AgentBrain:
             "type": "function",
             "function": {
                 "name": "create_event",
-                "description": "Add a new appointment. Use ONLY when the user wants to schedule something. Extract title, category, and date. If the date is vague or not 100 percent certain, return an empty string for start_date.",
+                "description": "Create a new calendar appointment.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "title": {
                             "type": "string",
-                            "description": "Summary of the appointment",
+                            "description": "Event title",
                         },
                         "start_date": {
                             "type": "string",
-                            "description": "ISO YYYY-MM-DD HH:MM. If the day is vague (e.g. 'next week', 'soon', 'later') return EMPTY STRING. Never guess. Examples: 'next Wednesday' -> '', 'today at 5' -> '2026-01-20 17:00'",
+                            "description": "Target date. Use ISO YYYY-MM-DD HH:MM if possible. If relative (e.g. 'monday', 'tomorrow'), return the literal text.",
                         },
                         "end_date": {
                             "type": "string",
-                            "description": "ISO YYYY-MM-DD HH:MM. Return empty string if not specified.",
+                            "description": "End date. Use ISO YYYY-MM-DD HH:MM if possible. If relative, return literal text. Return empty string if not specified.",
                         },
                         "category_name": {
                             "type": "string",
-                            "description": "Category (work, medical, personal, etc). Default to 'personal' if unsure.",
+                            "description": "Category (work, medical, personal, etc). Default to 'personal'.",
                         },
                     },
                     "required": ["title", "start_date", "category_name"],
@@ -183,17 +139,17 @@ class AgentBrain:
             "type": "function",
             "function": {
                 "name": "get_events",
-                "description": "List appointments from the calendar. Use it for 'what do I have', 'check my schedule' or 'plans'. You must calculate absolute dates. If the date is vague (e.g., 'soon', 'later', 'next week') and you cannot determine the exact start day, return an EMPTY STRING.",
+                "description": "List appointments from the calendar. Use it for 'what do I have', 'check my schedule' or 'plans'.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "start_date": {
                             "type": "string",
-                            "description": "ISO YYYY-MM-DD HH:MM. Default time: 00:00. If the user is Vague, return an EMPTY STRING. Example: 'Today' -> '2026-01-20 00:00', 'Soon' -> '' ",
+                            "description": "Target date. Use ISO YYYY-MM-DD HH:MM if possible. Default time, 00:00 If relative (e.g. 'monday', 'tomorrow'), return the literal text.",
                         },
                         "end_date": {
                             "type": "string",
-                            "description": "ISO YYYY-MM-DD HH:MM. If not specified or unknown, return an empty string. Never invent an end date.",
+                            "description": "End date. Use ISO YYYY-MM-DD HH:MM if possible. If not specified or unknown, return an empty string. Never invent an end date.",
                         },
                     },
                     "required": ["start_date"],
