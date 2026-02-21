@@ -74,6 +74,7 @@ class AgentBrain:
             options={
                 "temperature": 0.0,
                 "num_predict": 50,
+                "num_ctx": 1024,
             },
         )
 
