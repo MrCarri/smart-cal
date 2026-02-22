@@ -13,7 +13,7 @@ import time
 @app.command()
 def ask(
     prompt: str = typer.Argument(..., help="What you want to say to the assistant"),
-    model: str = typer.Option("granite4:1b", help="Ollama model to use"),
+    model: str = typer.Option("granite4_custom:3b", help="Ollama model to use"),
 ):
     """
     Sends an instruction in natural language to the assistant

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import json
 from string import Template
 
-from ollama import chat
+from ollama import generate
 from crud import CalendarRepository
 from helpers import (  # Translate names into English, for non English locales.
     DAYS_EN,
@@ -66,34 +66,67 @@ class AgentBrain:
         # 1. Construct history
         history = [{"role": "system", "content": self._get_system_prompt()}]
         history.append({"role": "user", "content": user_input})
-
-        response = chat(
+        response = generate(
             model=self.model,
-            messages=history,
-            tools=self._get_tools_schema(),
+            prompt=self._PROMPT_TEMPLATE_INTENTION.substitute(
+                {"user_input": user_input}
+            ),
+            format="json",
+            stream=False,
+            think=False,
             options={
                 "temperature": 0.0,
                 "num_predict": 50,
-                "num_ctx": 1024,
+                "num_ctx": 512,
             },
         )
+        return response.response
+        # response = chat(
+        #     model=self.model,
+        #     messages=history,
+        #     tools=self._get_tools_schema(),
+        #     options={
+        #         "temperature": 0.0,
+        #         "num_predict": 50,
+        #         "num_ctx": 1024,
+        #     },
+        # )
 
         # 2. Call tools management
-        if response.message.tool_calls:
-            for call in response.message.tool_calls:
-                # Execute tool
-                try:
-                    tool_result = self._execute_tool(call)
-                except Exception as exc:
-                    tool_result = f"Error calling tool. Reason: {str(exc)}"
+        # if response.message.tool_calls:
+        #     for call in response.message.tool_calls:
+        #         # Execute tool
+        #         try:
+        #             tool_result = self._execute_tool(call)
+        #         except Exception as exc:
+        #             tool_result = f"Error calling tool. Reason: {str(exc)}"
 
-                # If there's a call to get events, add a small format reminder of the rules. this for small models.
-                if call.function.name == "get_events" and not tool_result:
-                    return "No events found for this period."
-                return tool_result
+        #         # If there's a call to get events, add a small format reminder of the rules. this for small models.
+        #         if call.function.name == "get_events" and not tool_result:
+        #             return "No events found for this period."
+        #         return tool_result
 
-        return "Sorry, Don't understand."
+        # return "Sorry, Don't understand."
 
+    _PROMPT_TEMPLATE_INTENTION = Template(
+        """
+        # TASK: Analyze the user intention and ANSWER ONLY with a valid JSON.
+        # RULES: "intention" value, must be one of this four: "create_event", "get_events", "delete_event","unknown". Do not invent new words.
+        # EXAMPLES:
+
+        User: "Add event to calendar for monday"
+        JSON: {"intention": "create_event"}
+
+        User: "What do I have scheduled for today"
+        JSON: {"intention": "get_events"}
+
+        User: "Delete the appointment with id 1"
+        JSON: {"intention": "delete_event"}
+
+        User: "$user_input"
+        JSON:
+        """
+    )
     _PROMPT_TEMPLATE = Template(
         """
 
