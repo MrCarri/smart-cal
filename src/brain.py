@@ -36,7 +36,8 @@ class AgentBrain:
             f"Tomorrow is {DAYS_EN[tomorrow.weekday()]} {tomorrow.strftime('%Y-%m-%d')}. "
             f"Next week starts on {DAYS_EN[0]} {next_monday.strftime('%Y-%m-%d')}."
         )
-        return self._PROMPT_TEMPLATE.substitute({"current_datetime": current_time_str})
+        return ""  # TODO: FIXME
+        # return self._PROMPT_TEMPLATE.substitute({"current_datetime": current_time_str})
 
     def _get_tools_schema(self) -> list:
         return self._TOOLS
@@ -64,8 +65,8 @@ class AgentBrain:
 
     def chat(self, user_input: str):
         # 1. Construct history
-        history = [{"role": "system", "content": self._get_system_prompt()}]
-        history.append({"role": "user", "content": user_input})
+        # history = [{"role": "system", "content": self._get_system_prompt()}]
+        # history.append({"role": "user", "content": user_input})
         response = generate(
             model=self.model,
             prompt=self._PROMPT_TEMPLATE_INTENTION.substitute(
@@ -127,18 +128,99 @@ class AgentBrain:
         JSON:
         """
     )
-    _PROMPT_TEMPLATE = Template(
+    _PROMPT_TEMPLATE_CREATE_EVENT = Template(
         """
-
-        # SYSTEM: Calendar Agent.
-        # TASK:  Call the required tool and exit.
+        # ROLE: Event extractor from user input.
         # CONTEXT:
-        - $current_datetime.
-        - Timezone is Europe/Madrid.
+        - today is: $today_weekday $today_date
+        - tomorrow is: $tomorrow_weekday $tomorrow_date
+        - Current year: $current_year
+        - Timezone is Europe/Madrid
+        # TASK: Extract event information, dates and category,and ANSWER ONLY with a valid JSON.
+        # RULES: Extract the following values:
+        - title: must be a concise summary of the appointment.
+        - start_date: Target date. Use format YYYY-MM-DD HH:MM if possible. If relative, extract the relative fragment.
+        - end_date: End date. Use format YYYY-MM-DD HH:MM if possible. If relative, extract the relative fragment. Return "" if not specified.
+        - category_name: Category of the event. (work, medical, personal, etc.) Default to 'personal'.
+
+        # EXAMPLES:
+
+        USER: "Add doctor appointment for next monday"
+        JSON: {"title": "Doctor appointment", "start_date":"next monday", "end_date":"","category_name":"medical"}
+
+        USER: "Add buying groceries today at 9 "
+        JSON: {"title": "Buy Groceries", "start_date":"$today_date 09:00", "end_date":"","category_name":"personal"}
+
+        USER: "Create a work meeting tomorrow at 11 with a duration of 30 minutes."
+        JSON: {"title": "Work meeting", "start_date":"$tomorrow_date 11:00", "end_date":"$tomorrow_date 11:30","category_name":"work"}
+
+        USER: "Schedule a dinner with my wife on february 25th"
+        JSON: {"title": "Dinner with my wife", "start_date":"$current_year-02-25 00:00", "end_date":"","category_name":"personal"}
+
+        User: "$user_input"
+        JSON:
 
         """
     )
 
+    _PROMPT_TEMPLATE_LIST_EVENTS = Template(
+        """
+        # ROLE: Date extractor from user input
+        # CONTEXT:
+        - today is: $today_weekday $today_date
+        - tomorrow is: $tomorrow_weekday $tomorrow_date
+        - Current year: $current_year
+        - Timezone is Europe/Madrid
+        # TASK: Extract start_date and end_date from user input. ANSWER ONLY with a valid JSON.
+        # RULES: Extract the following values:
+        - start_date: Target date. Use format YYYY-MM-DD HH:MM if possible. Default time, 00:00. If relative, extract the relative fragment.
+        - end_date: End date. Use format YYYY-MM-DD HH:MM if possible. If a single day is mentioned, default time is 23:59. If the input is a broad relative period (like week or month) and has no specific end, return "". If relative, extract the relative fragment. Return "" if not specified.
+
+        # EXAMPLES:
+
+        USER: "What do I have for tomorrow?"
+        JSON: { "start_date":"$tomorrow_date 00:00", "end_date":"$tomorrow_date 23:59"}
+
+        USER: "List appointments for today."
+        JSON: { "start_date":"$today_date 00:00", "end_date":"$today_date 23:59"}
+
+        USER: "What do I have for today and tomorrow?"
+        JSON: { "start_date":"$today_date 00:00", "end_date":"$tomorrow_date 23:59"}
+
+        USER: "What do I have scheduled next week?"
+        JSON: { "start_date":"next week", "end_date":""}
+
+        USER: "What I have to do next month?"
+        JSON: { "start_date":"next month", "end_date":""}
+
+        USER: "What appointments are on the 26th of february?"
+        JSON: {"start_date":"$current_year-02-26 00:00", "end_date":"$current_year-02-26 23:59"}
+
+        User: "$user_input"
+        JSON:
+
+        """
+    )
+
+    _PROMPT_TEMPLATE_DELETE_EVENT = Template(
+        """
+        # ROLE: Id extractor from user input
+        # TASK: Extract the event id from user input
+        # RULES: "event_id" value, must be numerical. If missing or unknown, return "unknown".
+
+        User: "Delete doctor appointment with id 25"
+        JSON: {"event_id": 25}
+
+        User: "Delete the scheduled dinner at 3"
+        JSON: {"event_id": "unknown"}
+
+        User: "Clear tomorrow work meeting"
+        JSON: {"event_id": "unknown"}
+
+        User: "$user_input"
+        JSON:
+        """
+    )
     _TOOLS = [
         {
             "type": "function",
